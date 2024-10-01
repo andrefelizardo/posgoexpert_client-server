@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/andrefelizardo/goposexpert_client-server/configs"
 )
 
 	
@@ -26,14 +29,23 @@ type Cotacao struct {
 	} `json:"USDBRL"`
 }
 
+var db *sql.DB
+
 func main() {
+	var err error
+	db, err = configs.InitDB()
+	if err != nil {
+		log.Fatalf("Erro ao inicializar banco de dados: %v", err)
+	}
+	defer db.Close()
+
 	http.HandleFunc("/cotacao", handlerCotacao)
 
-	err := http.ListenAndServe(":8080", nil)
+	log.Println("Servidor iniciando na porta :8080")
+	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
 		log.Fatalf("Erro ao iniciar servidor: %v", err)
 	}
-	log.Println("Servidor iniciado na porta :8080")
 
 	
 }
@@ -46,6 +58,14 @@ func handlerCotacao(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao obter cotação", http.StatusInternalServerError)
         return
 	}
+
+	err = armazenaCotacaoDolar(cotacao)
+	if err != nil {
+		http.Error(w, "Erro ao armazenar cotação", http.StatusInternalServerError)
+		return
+	}
+
+
 	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -68,6 +88,7 @@ func getCotacaoDolar() (string, error) {
 		log.Printf("Erro ao fazer requisição: %v", err)
 		return "", err
 	}
+	log.Println("Requisição feita com sucesso")
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -85,4 +106,26 @@ func getCotacaoDolar() (string, error) {
 
 	
 	return cotacao.Usdbrl.Bid, nil
+}
+
+func armazenaCotacaoDolar(cotacao string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+
+	smt, err := db.PrepareContext(ctx, "INSERT INTO cotacoes (bid) VALUES (?)")
+	if err != nil {
+		log.Printf("Erro ao preparar statement: %v", err)
+		return err
+	}
+
+	_, err = smt.ExecContext(ctx, cotacao)
+	if err != nil {
+		log.Printf("Erro ao executar statement: %v", err)
+		return err
+	}
+
+	defer smt.Close()
+
+	return nil
 }
